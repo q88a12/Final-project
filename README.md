@@ -29,18 +29,27 @@
 - Несколько виртуальных машин или серверов с установленной операционной системой Ubuntu.
 
 ### Установка
-1.Клонируйте репозиторий
+1.Установите Ansible
+
+    sudo apt install ansible
+
+2.Установите Git, если он еще не установлен
+
+    sudo apt install git
+    
+3.Клонируйте репозиторий
 
     git clone https://github.com/q88a12/Final-project.git
 
+4.Перейдите в директорию проекта
 
-    Перейдите в директорию проекта: cd <директория проекта>
+    cd Final-project.git
 
-    Настройте hosts файл Ansible, указав IP-адреса ваших серверов.
+5.Запустите Ansible playbook
 
-    Запустите Ansible playbook: ansible-playbook playbook.yml
+    ansible-playbook -i inventory/production playbooks/main.yml --extra-vars "variable_name=value"
 
-Настройка
+### Настройка
 
 Перед запуском playbook необходимо настроить следующие параметры в файле playbook.yml:
 
