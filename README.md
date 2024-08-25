@@ -30,23 +30,23 @@
 
 
 ### Установка
-1.Установите Ansible
+1.Установите Ansible:
 
     sudo apt install ansible
 
-2.Установите Git, если он еще не установлен
+2.Установите Git, если он еще не установлен:
 
     sudo apt install git
     
-3.Клонируйте репозиторий
+3.Клонируйте репозиторий:
 
     git clone https://github.com/q88a12/Final-project.git
 
-4.Перейдите в директорию проекта
+4.Перейдите в директорию проекта:
 
     cd Final-project.git
 
-5.Запустите Ansible playbook
+5.Запустите Ansible playbook:
 
     ansible-playbook -i inventory/production playbooks/main.yml --extra-vars "variable_name=value"
 
