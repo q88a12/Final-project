@@ -1,0 +1,676 @@
+---
+- hosts: all
+  become: true
+  vars_files:
+    - vars.yml
+  tasks:
+    - name: Install common packages
+      apt:
+        name:
+          - wget
+          - curl
+          - python3-pip
+        state: present
+        update_cache: yes
+
+    - name: Install Filebeat
+      apt:
+        name: filebeat
+        state: present
+        update_cache: yes
+
+    - name: Configure Filebeat
+      copy:
+        content: |
+          filebeat.inputs:
+          - type: file
+            enabled: true
+            paths:
+              - /var/log/nginx/*.log
+              - /var/log/apache2/*.log
+              - /var/log/mysql/*.log
+            
+          output.elasticsearch:
+            hosts: ["{{ remote_pc }}:9200"]
+
+          processors:
+            - add_host_metadata:
+                when.not.contains.tags: forwarded
+        dest: /etc/filebeat/filebeat.yml
+      notify: Restart Filebeat
+
+- hosts: "{{ remote_pc }}"
+  become: true
+  tasks:
+    - name: Install Elasticsearch
+      apt:
+        name: elasticsearch
+        state: present
+        update_cache: yes
+
+    - name: Configure Elasticsearch
+      copy:
+        content: |
+          network.host: 0.0.0.0
+          http.port: 9200
+          discovery.type: single-node
+        dest: /etc/elasticsearch/elasticsearch.yml
+
+    - name: Install Kibana
+      apt:
+        name: kibana
+        state: present
+        update_cache: yes
+
+    - name: Configure Kibana
+      copy:
+        content: |
+          server.port: 5601
+          server.host: "0.0.0.0"
+          elasticsearch.hosts: ["http://{{ remote_pc }}:9200"]
+        dest: /etc/kibana/kibana.yml
+
+    - name: Start Elasticsearch service
+      service:
+        name: elasticsearch
+        state: started
+        enabled: true
+
+    - name: Start Kibana service
+      service:
+        name: kibana
+        state: started
+        enabled: true
+
+    - name: Allow port 9200 for Elasticsearch (iptables)
+      iptables:
+        chain: INPUT
+        protocol: tcp
+        dport: 9200
+        jump: ACCEPT
+        state: present
+
+    - name: Allow port 5601 for Kibana (iptables)
+      iptables:
+        chain: INPUT
+        protocol: tcp
+        dport: 5601
+        jump: ACCEPT
+        state: present
+
+- hosts: "{{ nginx_load_balancer }}"
+  become: true
+  tasks:
+    # Install Nginx
+    - name: Install Nginx
+      apt:
+        name: nginx
+        state: present
+        update_cache: yes
+
+    # Configure Nginx as Load Balancer
+    - name: Configure Nginx as Load Balancer
+      blockinfile:
+        path: /etc/nginx/nginx.conf
+        block: |
+          events {
+              worker_connections 1024;
+          }
+
+          http {
+              upstream backend {
+                  server {{ apache_server_1 }}:80;
+                  server {{ apache_server_2 }}:80;
+              }
+
+              server {
+                  listen 80;
+
+                  location / {
+                      proxy_pass http://backend;
+                      proxy_set_header Host $host;
+                      proxy_set_header X-Real-IP $remote_addr;
+                  }
+              }
+          }
+        marker: "# {mark} ANSIBLE MANAGED BLOCK"
+      notify: Restart Nginx
+
+    - name: Start Nginx service
+      service:
+        name: nginx
+        state: started
+        enabled: true
+
+    - name: Install Node Exporter
+      unarchive:
+        src: "https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz"
+        dest: /usr/local/bin
+        remote_src: yes
+
+    - name: Create Node Exporter service file
+      copy:
+        content: |
+          [Unit]
+          Description=Node Exporter
+          After=network.target
+
+          [Service]
+          User=nobody
+          Group=nobody
+          Type=simple
+          ExecStart=/usr/local/bin/node_exporter-{{ node_exporter_version }}.linux-amd64/node_exporter
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/node_exporter.service
+
+    - name: Enable and start Node Exporter service
+      service:
+        name: node_exporter
+        enabled: yes
+        state: started
+
+    - name: Allow port 80 for HTTP (iptables)
+      iptables:
+        chain: INPUT
+        protocol: tcp
+        dport: 80
+        jump: ACCEPT
+        state: present
+
+    - name: Allow port 9100 for Node Exporter (iptables)
+      iptables:
+        chain: INPUT
+        protocol: tcp
+        dport: 9100
+        jump: ACCEPT
+        state: present
+
+- hosts: "{{ apache_server_1 }}, {{ apache_server_2 }}"
+  become: true
+  tasks:
+    - name: Install Apache and PHP packages
+      apt:
+        name:
+          - apache2
+          - php
+          - php-mysql
+          - libapache2-mod-php
+          - php-cli
+          - php-curl
+          - php-gd
+          - php-mbstring
+          - php-xml
+          - php-xmlrpc
+          - php-soap
+          - php-intl
+          - php-zip
+        state: present
+        update_cache: yes
+
+    - name: Start Apache2 service
+      service:
+        name: apache2
+        state: started
+        enabled: yes
+
+    - name: Download latest WordPress
+      get_url:
+        url: https://wordpress.org/latest.tar.gz
+        dest: /tmp/wordpress.tar.gz
+
+    - name: Extract WordPress
+      unarchive:
+        src: /tmp/wordpress.tar.gz
+        dest: /var/www/html/
+        remote_src: yes
+
+    - name: Set permissions for WordPress
+      file:
+        path: /var/www/html/wordpress
+        owner: www-data
+        group: www-data
+        state: directory
+        recurse: yes
+
+    - name: Configure Apache for WordPress
+      copy:
+        content: |
+          <VirtualHost *:80>
+              ServerAdmin webmaster@localhost
+              DocumentRoot /var/www/html/wordpress
+              ServerName {{ wordpress_url }}
+
+              <Directory /var/www/html/wordpress/>
+                  Options FollowSymLinks
+                  AllowOverride All
+                  Require all granted
+              </Directory>
+
+              ErrorLog ${APACHE_LOG_DIR}/error.log
+              CustomLog ${APACHE_LOG_DIR}/access.log combined
+          </VirtualHost>
+        dest: /etc/apache2/sites-available/wordpress.conf
+
+    - name: Copy wp-config-sample.php to wp-config.php
+      command: cp /var/www/html/wordpress/wp-config-sample.php /var/www/html/wordpress/wp-config.php
+
+    - name: Configure WordPress database details
+      lineinfile:
+        path: /var/www/html/wordpress/wp-config.php
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+      loop:
+        - { regexp: '^define\\(\'DB_NAME\', \'.*\'\);$', line: 'define(\'DB_NAME\', \'{{ mysql_db }}\');' }
+        - { regexp: '^define\\(\'DB_USER\', \'.*\'\);$', line: 'define(\'DB_USER\', \'{{ mysql_replication_user }}\');' }
+        - { regexp: '^define\\(\'DB_PASSWORD\', \'.*\'\);$', line: 'define(\'DB_PASSWORD\', \'{{ mysql_replication_password }}\');' }
+        - { regexp: '^define\\(\'DB_HOST\', \'.*\'\);$', line: 'define(\'DB_HOST\', \'{{ mysql_master }}\');' }
+
+    - name: Delete index.html apache2
+      command: rm -rf /var/www/html/wordpress/index.html
+
+    - name: Enable WordPress site
+      command: a2ensite wordpress.conf
+
+    - name: Disable default Apache site
+      command: a2dissite 000-default.conf
+
+    - name: Enable Apache rewrite module
+      command: a2enmod rewrite
+
+    - name: Restart Apache
+      service:
+        name: apache2
+        state: restarted
+
+    - name: Allow port 80 for HTTP (iptables)
+      iptables:
+        chain: INPUT
+        protocol: tcp
+        dport: 80
+        jump: ACCEPT
+        state: present
+
+    - name: Allow port 9100 for Node Exporter (iptables)
+      iptables:
+        chain: INPUT
+        protocol: tcp
+        dport: 9100
+        jump: ACCEPT
+        state: present
+
+- hosts: "{{ mysql_master }}"
+  become: true
+  tasks:
+    - name: Install MySQL Server
+      apt:
+        name:
+          - mysql-server
+          - python3-mysqldb
+        state: present
+        update_cache: yes
+
+    - name: Start MySQL Service
+      service:
+        name: mysql
+        state: started
+        enabled: yes
+
+    - name: Configure MySQL for Replication
+      blockinfile:
+        path: /etc/mysql/mysql.conf.d/mysqld.cnf
+        block: |
+          server-id = 1
+          log_bin = mysql-bin
+          binlog_format = row
+          gtid-mode=ON
+          enforce-gtid-consistency
+          log-replica-updates
+          bind-address = 0.0.0.0
+        marker: "# {mark}  MySQL MASTER - mysqld.cnf"
+        replace:
+          regexp: '^server-id.*$'
+
+    - name: Set MySQL Root Password
+      mysql_user:
+        name: root
+        password: "{{ mysql_root_password }}"
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+
+    - name: Create WordPress database
+      mysql_db:
+        name: "{{ mysql_db }}"
+        state: present
+
+    - name: Create Replication/WordPress User
+      mysql_user:
+        name: "{{ mysql_replication_user }}"
+        password: "{{ mysql_replication_password }}"
+        host: '%'
+        priv: '*.*:ALL,REPLICATION SLAVE'
+        state: present
+
+    - name: Grant privileges on wordpress_db
+      mysql_db:
+        name: wordpress_db
+        state: present
+        priv: "{{ mysql_replication_user }}@'%':ALL"
+
+    - name: Restart MySQL
+      service:
+        name: mysql
+        state: restarted
+
+    - name: Allow port 3306 for MySQL (iptables)
+      iptables:
+        chain: INPUT
+        protocol: tcp
+        dport: 3306
+        jump: ACCEPT
+        state: present
+
+    - name: Download MySQLD Exporter
+      get_url:
+        url: "https://github.com/prometheus/mysqld_exporter/releases/download/v{{ mysqld_exporter_version }}/mysqld_exporter-{{ mysqld_exporter_version }}.linux-amd64.tar.gz"
+        dest: /tmp/mysqld_exporter.tar.gz
+
+    - name: Extract MySQLD Exporter
+      unarchive:
+        src: /tmp/mysqld_exporter.tar.gz
+        dest: /usr/local/bin
+        remote_src: yes
+
+    - name: Create MySQLD Exporter service file
+      copy:
+        content: |
+          [Unit]
+          Description=MySQLD Exporter
+          After=network.target mysqld.service
+
+          [Service]
+          User=nobody
+          Group=nobody
+          Type=simple
+          ExecStart=/usr/local/bin/mysqld_exporter-{{ mysqld_exporter_version }}.linux-amd64/mysqld_exporter \
+            --collect.info_schema.tables \
+            --collect.info_schema.processlist \
+            --collect.info_schema.innodb_trx \
+            --collect.info_schema.innodb_metrics \
+            --collect.performance_schema.events_statements_summary_by_digest \
+            --collect.performance_schema.table_io_waits_summary_by_table
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/mysqld_exporter.service
+
+    - name: Enable and start MySQLD Exporter service
+      service:
+        name: mysqld_exporter
+        enabled: yes
+        state: started
+
+    - name: Allow port 9104 for MySQLD Exporter (iptables)
+      iptables:
+        chain: INPUT
+        protocol: tcp
+        dport: 9104
+        jump: ACCEPT
+        state: present
+
+    - name: Allow port 9100 for Node Exporter (iptables)
+      iptables:
+        chain: INPUT
+        protocol: tcp
+        dport: 9100
+        jump: ACCEPT
+        state: present
+
+- hosts: "{{ mysql_slave }}"
+  become: true
+  tasks:
+    - name: Install MySQL Server
+      apt:
+        name:
+          - mysql-server
+          - python3-mysqldb
+        state: present
+        update_cache: yes
+
+    - name: Start MySQL Service
+      service:
+        name: mysql
+        state: started
+        enabled: yes
+
+    - name: Set MySQL Root Password
+      mysql_user:
+        name: root
+        password: "{{ mysql_root_password }}"
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+
+    - name: Configure MySQL for Replication
+      blockinfile:
+        path: /etc/mysql/mysql.conf.d/mysqld.cnf
+        block: |
+          server-id = 2
+          log_bin = mysql-bin
+          relay-log = relay-log-server
+          read_only = ON
+          gtid-mode=ON
+          enforce-gtid-consistency
+          log-replica-update
+          bind-address = 0.0.0.0
+        marker: "# {mark}  MySQL SLAVE - mysqld.cnf"
+        replace:
+          regexp: '^server-id.*$'
+
+    - name: Restart MySQL
+      service:
+        name: mysql
+        state: restarted
+
+    - name: Get Master Status
+      mysql_replication:
+        mode: getmaster
+        login_host: "{{ mysql_master }}"
+        login_user: "{{ mysql_replication_user }}"
+        login_password: "{{ mysql_replication_password }}"
+      register: master_status
+
+    - name: Configure Slave Replication
+      mysql_replication:
+        mode: changemaster
+        master_host: "{{ mysql_master }}"
+        master_user: "{{ mysql_replication_user }}"
+        master_password: "{{ mysql_replication_password }}"
+        master_log_file: "{{ master_status.log_file }}"
+        master_log_pos: "{{ master_status.log_pos }}"
+        login_host: localhost
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+      when: master_status.changed
+
+    - name: Start Slave
+      mysql_replication:
+        mode: startslave
+        login_host: localhost
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+
+    - name: Allow port 3306 for MySQL Replication (iptables)
+      iptables:
+        chain: INPUT
+        protocol: tcp
+        dport: 3306
+        jump: ACCEPT
+        state: present
+        source: "{{ mysql_master }}"
+
+    - name: Allow port 9100 for Node Exporter (iptables)
+      iptables:
+        chain: INPUT
+        protocol: tcp
+        dport: 9100
+        jump: ACCEPT
+        state: present
+
+- hosts: "{{ remote_pc }}"
+  become: true
+  tasks:
+    - name: Install Prometheus
+      apt: 
+        name: prometheus
+        state: present
+        update_cache: yes
+
+    - name: Configure Prometheus
+      copy:
+        content: |
+          global:
+            scrape_interval:     15s 
+            evaluation_interval: 15s 
+
+          scrape_configs:
+            - job_name: 'prometheus'
+              static_configs:
+                - targets: ['localhost:9090']
+
+            - job_name: 'nginx'
+              static_configs:
+                - targets: ['{{ nginx_load_balancer }}:9100']
+
+            - job_name: 'node'
+              static_configs:
+                - targets: ['{{ apache_server_1 }}:9100', '{{ apache_server_2 }}:9100', '{{ nginx_load_balancer }}:9100', '{{ mysql_master }}:9100', '{{ mysql_slave }}:9100', '{{ remote_pc }}:9100', '{{ remote_pc }}:9100']
+
+            - job_name: 'mysql'
+              static_configs:
+                - targets: ['{{ mysql_master }}:9104']
+
+        dest: /etc/prometheus/prometheus.yml
+      notify: Restart Prometheus
+
+    - name: Install Grafana
+      apt:
+        name: grafana-enterprise
+        state: present
+        update_cache: yes
+
+    - name: Configure Grafana
+      copy:
+        content: |
+          [server]
+          http_port = 3000
+          domain = localhost
+          root_url = %(protocol)s://%(domain)s:%(http_port)s/
+          enforce_domain = true
+
+          [database]
+          type = sqlite3
+          path = /var/lib/grafana/grafana.db
+          host = localhost:3306
+          name = grafana
+          user = root
+          password = 
+
+          [security]
+          admin_user = admin
+          admin_password = your_secure_grafana_password # Change this!
+
+          [users]
+          allow_sign_up = true
+          auto_assign_org = true
+          auto_assign_org_role = Editor
+          
+          [auth.anonymous]
+          enabled = false
+
+        dest: /etc/grafana/grafana.ini
+      notify: Restart Grafana
+
+    - name: Start Prometheus service
+      service:
+        name: prometheus
+        state: started
+        enabled: true
+
+    - name: Start Grafana service
+      service:
+        name: grafana-server
+        state: started
+        enabled: true
+
+    - name: Install Node Exporter
+      unarchive:
+        src: "https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz"
+        dest: /usr/local/bin
+        remote_src: yes
+
+    - name: Create Node Exporter service file
+      copy:
+        content: |
+          [Unit]
+          Description=Node Exporter
+          After=network.target
+
+          [Service]
+          User=nobody
+          Group=nobody
+          Type=simple
+          ExecStart=/usr/local/bin/node_exporter-{{ node_exporter_version }}.linux-amd64/node_exporter
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/node_exporter.service
+
+    - name: Enable and start Node Exporter service
+      service:
+        name: node_exporter
+        enabled: yes
+        state: started
+
+    - name: Allow port 9100 for Node Exporter (iptables)
+      iptables:
+        chain: INPUT
+        protocol: tcp
+        dport: 9100
+        jump: ACCEPT
+        state: present
+
+    - name: Allow port 9090 for Prometheus (iptables)
+      iptables:
+        chain: INPUT
+        protocol: tcp
+        dport: 9090
+        jump: ACCEPT
+        state: present
+
+    - name: Allow port 3000 for Grafana (iptables)
+      iptables:
+        chain: INPUT
+        protocol: tcp
+        dport: 3000
+        jump: ACCEPT
+        state: present
+
+  handlers:
+    - name: Restart Filebeat
+      service:
+        name: filebeat
+        state: restarted
+
+    - name: Restart Nginx
+      service:
+        name: nginx
+        state: restarted
+
+    - name: Restart Prometheus
+      service:
+        name: prometheus
+        state: restarted
+
+    - name: Restart Grafana
+      service:
+        name: grafana-server
+        state: restarted
