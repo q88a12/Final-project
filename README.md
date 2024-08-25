@@ -30,7 +30,8 @@
 
 ### Установка
 1. Клонируйте репозиторий:
-   git clone https://github.com/q88a12/Final-project.git
+   
+    git clone https://github.com/q88a12/Final-project.git
 
 
     Перейдите в директорию проекта: cd <директория проекта>
