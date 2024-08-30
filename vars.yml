@@ -1,12 +1,12 @@
 # Переменные для базы данных
-mysql_root_password: "your_secure_mysql_root_password"
+mysql_root_password: "TTT88"
 mysql_replication_user: "repl_user"
-mysql_replication_password: "your_secure_replication_password"
+mysql_replication_password: "AAA88"
 mysql_db: "wordpress_db"
 
 # Переменные для WordPress
 wordpress_user: "wordpress_user"
-wordpress_password: "your_secure_wordpress_password"
+wordpress_password: "SSS88"
 wordpress_url: "http://your_domain.com"
 
 # Переменные для мониторинга
