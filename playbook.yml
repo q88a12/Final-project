@@ -262,10 +262,10 @@
         regexp: "{{ item.regexp }}"
         line: "{{ item.line }}"
       loop:
-        - { regexp: '^define\\(\'DB_NAME\', \'.*\'\);$', line: "define(\'DB_NAME\', \'{{ mysql_db }}\');" }
-        - { regexp: '^define\\(\'DB_USER\', \'.*\'\);$', line: "define(\'DB_USER\', \'{{ mysql_replication_user }}\');" }
-        - { regexp: '^define\\(\'DB_PASSWORD\', \'.*\'\);$', line: "define(\'DB_PASSWORD\', \'{{ mysql_replication_password }}\');" }
-        - { regexp: '^define\\(\'DB_HOST\', \'.*\'\);$', line: "define(\'DB_HOST\', \'{{ mysql_master }}\');" }
+        - { regexp: "^define\\(\'DB_NAME\', \'.*\'\);$", line: "define(\'DB_NAME\', \'{{ mysql_db }}\');" }
+        - { regexp: "^define\\(\'DB_USER\', \'.*\'\);$", line: "define(\'DB_USER\', \'{{ mysql_replication_user }}\');" }
+        - { regexp: "^define\\(\'DB_PASSWORD\', \'.*\'\);$", line: "define(\'DB_PASSWORD\', \'{{ mysql_replication_password }}\');" }
+        - { regexp: "^define\\(\'DB_HOST\', \'.*\'\);$", line: "define(\'DB_HOST\', \'{{ mysql_master }}\');" }
 
     - name: Delete index.html apache2
       command: rm -rf /var/www/html/wordpress/index.html
