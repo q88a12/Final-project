@@ -48,7 +48,7 @@
 
 5.Запустите Ansible playbook:
 
-    ansible-playbook -i inventory/production playbooks/main.yml --extra-vars "variable_name=value"
+    ansible-playbook -i ./inventory.ini ./playbook.yml --extra-vars "variable_name=value"
 
 ### Настройка
 
