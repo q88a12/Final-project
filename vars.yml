@@ -17,5 +17,15 @@ mysqld_exporter_version: "0.14.0"
 apache_server_1: "192.168.1.102"
 apache_server_2: "192.168.1.103"
 
-# файл бэкапа
-mysql_backup_script: "/path/to/backup.sh"
+# Firewall ports
+firewall_ports:
+  - 22
+  - 80
+  - 443
+  - 3306
+  - 9100
+  - 9200
+  - 5601
+
+# Путь к скрипту бэкапа MySQL
+mysql_backup_script: "/path/to/backup.sh"  # Замените на фактический путь к скрипту
