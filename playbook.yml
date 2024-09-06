@@ -606,6 +606,13 @@
         state: present
         update_cache: yes
 
+    - name: Get Master server status
+      mysql_replication_status:
+        mode: master_status
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+      register: master_status
+
     - name: Configure MySQL for Replication (Slave)
       blockinfile:
         path: /etc/mysql/mysql.conf.d/mysqld.cnf
@@ -617,6 +624,12 @@
           log_bin = /var/log/mysql/mysql-bin.log
           binlog_do_db = {{ mysql_db }}
           bind-address = 0.0.0.0
+          master_host = {{ master_status.master_host }}
+          master_port = {{ master_status.master_port }}
+          master_user = {{ mysql_replication_user }}
+          master_password = {{ mysql_replication_password }}
+          master_log_file = {{ master_status.master_log_file }}
+          master_log_pos = {{ master_status.master_log_pos }}
       notify: Restart MySQL
 
     - name: Set MySQL Root Password
@@ -660,6 +673,19 @@
         enabled: yes
         state: started
         daemon_reload: yes
+
+    - name: Start Slave
+      mysql_replication_start:
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+
+    - name: Create cron job for backup
+      cron:
+        name: "MySQL Backup"
+        user: root
+        minute: "0"
+        hour: "0"
+        job: "{{ mysql_backup_script }}"
 
   handlers:
     - name: Restart MySQL
