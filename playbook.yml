@@ -461,6 +461,17 @@
         dest: /tmp/mysql_backup.tar.gz
       delegate_to: "{{ mysql_master }}"
 
+    - name: Create cron job for backup
+      cron:
+        name: "MySQL Backup"
+        user: root
+        minute: "0"  # Запуск каждый час в начале часа
+        hour: "*/4" # Запуск каждые 4 часа 
+        #day: "*"  # Запуск каждый день 
+        #month: "*" # Запуск каждый месяц
+        #weekday: "*" # Запуск каждый день недели 
+        job: "{{ mysql_backup_script }}"
+
 - hosts: mysql_master
   become: true
   tasks:
