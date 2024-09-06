@@ -7,8 +7,8 @@ PATH=$PATH:/usr/local/bin
 
 DIR=`date +"%Y-%m-%d"`
 DATE=`date +"%Y%m%d"`
-MYSQL='mysql --skip-column-names -u your_user -p'
-MYSQLDUMP='mysqldump --single-transaction --routines --events --triggers --master-data=2 -u your_user -p'
+MYSQL='mysql --skip-column-names -u {{ mysql_backup_user }} -p{{ mysql_backup_password }}'
+MYSQLDUMP='mysqldump --single-transaction --routines --events --triggers --master-data=2 -u {{ mysql_backup_user }} -p{{ mysql_backup_password }}'
 
 for db in `$MYSQL -e "SHOW DATABASES LIKE '%\_db'"`; do
     mkdir -p $DIR/$db
@@ -31,3 +31,5 @@ done
 find $DIR -mtime +7 -delete
 
 echo "Резервное копирование MySQL завершено"
+
+    
