@@ -16,3 +16,6 @@ mysqld_exporter_version: "0.14.0"
 # ip серверов Apache
 apache_server_1: "192.168.1.102"
 apache_server_2: "192.168.1.103"
+
+# файл бэкапа
+mysql_backup_script: "/path/to/backup.sh"
