@@ -545,6 +545,21 @@
         host: localhost
         state: present
 
+    - name: Create Backup User
+      mysql_user:
+        name: "{{ mysql_backup_user }}"
+        password: "{{ mysql_backup_password }}"
+        host: '%'  # Или укажите конкретный хост, если нужно
+        priv: '*.*:SELECT, LOCK TABLES, RELOAD, SHOW DATABASES, REPLICATION CLIENT'
+        state: present
+
+    - name: Grant REPLICATION SLAVE to backup user (optional, if needed)
+      mysql_user:
+        name: "{{ mysql_backup_user }}"
+        host: '%'  # Или укажите конкретный хост, если нужно
+        priv: '*.*:REPLICATION SLAVE'
+        state: present
+
     - name: Create WordPress database
       mysql_db:
         name: "{{ mysql_db }}"
