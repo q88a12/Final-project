@@ -21,6 +21,8 @@ wordpress_password: "wordpress_password"
 mysql_root_password: "mysql_root_password"
 mysql_replication_user: "replication_user"
 mysql_replication_password: "replication_password"
+mysql_backup_user: "backup_user"
+mysql_backup_password: "backup_password"
 
 # Firewall порты
 firewall_ports:
