@@ -1,31 +1,41 @@
-# Переменные для базы данных
-mysql_root_password: "TTT88"
-mysql_replication_user: "repl_user"
-mysql_replication_password: "AAA88"
-mysql_db: "wordpress_db"
+# Версии ПО
+node_exporter_version: 1.5.0
+mysqld_exporter_version: 0.14.0
+prometheus_version: 2.44.0
 
-# Переменные для WordPress
-wordpress_user: "wordpress_user"
-wordpress_password: "SSS88"
-wordpress_url: "http://your_domain.com"
-
-# Переменные для мониторинга
-node_exporter_version: "1.3.1"
-mysqld_exporter_version: "0.14.0"
-
-# ip серверов Apache
+# IP-адреса серверов
+remote_pc: "192.168.1.100" # Сервер для Elasticsearch, Kibana, Prometheus и Grafana
+nginx_load_balancer: "192.168.1.101"
 apache_server_1: "192.168.1.102"
 apache_server_2: "192.168.1.103"
+mysql_master: "192.168.1.104"
+mysql_slave: "192.168.1.105"
 
-# Firewall ports
+# WordPress настройки
+wordpress_url: "example.com"
+mysql_db: "wordpress"
+wordpress_user: "wordpress_user"
+wordpress_password: "wordpress_password"
+
+# MySQL настройки
+mysql_root_password: "mysql_root_password"
+mysql_replication_user: "replication_user"
+mysql_replication_password: "replication_password"
+
+# Firewall порты
 firewall_ports:
   - 22
   - 80
   - 443
-  - 3306
   - 9100
-  - 9200
+  - 9104
+  - 9090
   - 5601
+  - 3000
+  - 3306
+
+# Grafana настройки
+grafana_admin_password: "grafana_admin_password"
 
 # Путь к скрипту бэкапа MySQL
-mysql_backup_script: "/path/to/backup.sh"  # Замените на фактический путь к скрипту
+mysql_backup_script: "/path/to/backup_mysql.sh" 
