@@ -1,4 +1,3 @@
-      
 #!/bin/bash
 
 # MySQL backup script
@@ -31,5 +30,3 @@ done
 find $DIR -mtime +7 -delete
 
 echo "Резервное копирование MySQL завершено"
-
-    
