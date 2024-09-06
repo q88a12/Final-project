@@ -617,6 +617,13 @@
         state: present
         update_cache: yes
 
+    - name: Set MySQL Root Password
+      mysql_user:
+        name: root
+        password: "{{ mysql_root_password }}"
+        host: localhost
+        state: present
+
     - name: Get Master server status
       mysql_replication_status:
         mode: master_status
@@ -642,13 +649,6 @@
           master_log_file = {{ master_status.master_log_file }}
           master_log_pos = {{ master_status.master_log_pos }}
       notify: Restart MySQL
-
-    - name: Set MySQL Root Password
-      mysql_user:
-        name: root
-        password: "{{ mysql_root_password }}"
-        host: localhost
-        state: present
 
     - name: Download MySQLD Exporter
       get_url:
