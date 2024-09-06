@@ -40,4 +40,4 @@ firewall_ports:
 grafana_admin_password: "grafana_admin_password"
 
 # Путь к скрипту бэкапа MySQL
-mysql_backup_script: "/path/to/backup_mysql.sh" 
+mysql_backup_script: "./backup_mysql.sh" 
