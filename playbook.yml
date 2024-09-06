@@ -10,6 +10,10 @@
           - wget
           - curl
           - python3-pip
+          - software-properties-common
+          - apt-transport-https
+          - ca-certificates
+          - gnupg
         state: present
         update_cache: yes
 
@@ -38,6 +42,44 @@
                 when.not.contains.tags: forwarded
         dest: /etc/filebeat/filebeat.yml
       notify: Restart Filebeat
+
+    - name: Install Node Exporter
+      unarchive:
+        src: "https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz"
+        dest: /usr/local/bin
+        remote_src: yes
+
+    - name: Create Node Exporter service file
+      copy:
+        content: |
+          [Unit]
+          Description=Node Exporter
+          After=network.target
+
+          [Service]
+          User=nobody
+          Group=nobody
+          Type=simple
+          ExecStart=/usr/local/bin/node_exporter-{{ node_exporter_version }}.linux-amd64/node_exporter
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/node_exporter.service
+
+    - name: Enable and start Node Exporter service
+      systemd:
+        name: node_exporter
+        enabled: yes
+        state: started
+        daemon_reload: yes
+
+    - name: Allow necessary ports (iptables)
+      iptables:
+        chain: INPUT
+        protocol: tcp
+        destination_port: "{{ item }}"
+        jump: ACCEPT
+      loop: "{{ firewall_ports }}"
 
   handlers:
     - name: Restart Filebeat
@@ -73,7 +115,7 @@
         content: |
           server.port: 5601
           server.host: "0.0.0.0"
-          elasticsearch.hosts: ["http://{{ remote_pc }}:9200"]
+          elasticsearch.hosts: ["http://localhost:9200"]
         dest: /etc/kibana/kibana.yml
 
     - name: Start Elasticsearch service
@@ -88,22 +130,6 @@
         state: started
         enabled: true
 
-    - name: Allow port 9200 for Elasticsearch (iptables)
-      iptables:
-        chain: INPUT
-        protocol: tcp
-        dport: 9200
-        jump: ACCEPT
-        state: present
-
-    - name: Allow port 5601 for Kibana (iptables)
-      iptables:
-        chain: INPUT
-        protocol: tcp
-        dport: 5601
-        jump: ACCEPT
-        state: present
-
 - hosts: nginx_load_balancer
   become: true
   tasks:
@@ -114,9 +140,8 @@
         update_cache: yes
 
     - name: Configure Nginx as Load Balancer
-      blockinfile:
-        path: /etc/nginx/nginx.conf
-        block: |
+      copy:
+        content: |
           events {
               worker_connections 1024;
           }
@@ -137,7 +162,7 @@
                   }
               }
           }
-        marker: "# {mark} ANSIBLE MANAGED BLOCK"
+        dest: /etc/nginx/nginx.conf
       notify: Restart Nginx
 
     - name: Start Nginx service
@@ -145,51 +170,6 @@
         name: nginx
         state: started
         enabled: true
-
-    - name: Install Node Exporter
-      unarchive:
-        src: "https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz"
-        dest: /usr/local/bin
-        remote_src: yes
-
-    - name: Create Node Exporter service file
-      copy:
-        content: |
-          [Unit]
-          Description=Node Exporter
-          After=network.target
-
-          [Service]
-          User=nobody
-          Group=nobody
-          Type=simple
-          ExecStart=/usr/local/bin/node_exporter-{{ node_exporter_version }}.linux-amd64/node_exporter
-
-          [Install]
-          WantedBy=multi-user.target
-        dest: /etc/systemd/system/node_exporter.service
-
-    - name: Enable and start Node Exporter service
-      service:
-        name: node_exporter
-        enabled: yes
-        state: started
-
-    - name: Allow port 80 for HTTP (iptables)
-      iptables:
-        chain: INPUT
-        protocol: tcp
-        dport: 80
-        jump: ACCEPT
-        state: present
-
-    - name: Allow port 9100 for Node Exporter (iptables)
-      iptables:
-        chain: INPUT
-        protocol: tcp
-        dport: 9100
-        jump: ACCEPT
-        state: present
 
   handlers:
     - name: Restart Nginx
@@ -263,60 +243,153 @@
           </VirtualHost>
         dest: /etc/apache2/sites-available/wordpress.conf
 
-    - name: Check if wp-config.php exists
-      stat:
-        path: /var/www/html/wordpress/wp-config.php
-      register: wp_config
-
-    - name: Copy wp-config-sample.php to wp-config.php if it doesn't exist
-      command: cp /var/www/html/wordpress/wp-config-sample.php /var/www/html/wordpress/wp-config.php
-      when: not wp_config.stat.exists
-
-    - name: Configure WordPress database details
-      lineinfile:
-        path: /var/www/html/wordpress/wp-config.php
-        regexp: "{{ item.regexp }}"
-        line: "{{ item.line }}"
-      loop:
-        - { regexp: "^define\\('DB_NAME', '.*\\);$", line: "define('DB_NAME', '{{ mysql_db }}');" }
-        - { regexp: "^define\\('DB_USER', '.*\\);$", line: "define('DB_USER', '{{ mysql_replication_user }}');" }
-        - { regexp: "^define\\('DB_PASSWORD', '.*\\);$", line: "define('DB_PASSWORD', '{{ mysql_replication_password }}');" }
-        - { regexp: "^define\\('DB_HOST', '.*\\);$", line: "define('DB_HOST', '{{ mysql_master }}');" }
-
-    - name: Delete index.html apache2
-      file:
-        path: /var/www/html/wordpress/index.html
-        state: absent
-
     - name: Enable WordPress site
-      command: a2ensite wordpress.conf
+      apache2_module:
+        state: present
+        name: wordpress.conf
 
     - name: Disable default Apache site
-      command: a2dissite 000-default.conf
+      apache2_module:
+        state: absent
+        name: 000-default.conf
 
     - name: Enable Apache rewrite module
-      command: a2enmod rewrite
+      apache2_module:
+        state: present
+        name: rewrite
 
+    - name: Configure wp-config.php
+      copy:
+        content: |
+          <?php
+          define('DB_NAME', '{{ mysql_db }}');
+          define('DB_USER', '{{ wordpress_user }}');
+          define('DB_PASSWORD', '{{ wordpress_password }}');
+          define('DB_HOST', '{{ mysql_master }}');
+          define('DB_CHARSET', 'utf8');
+          define('DB_COLLATE', '');
+
+          define('AUTH_KEY',         '{{ lookup('password', '/dev/null chars=ascii_letters length=64') }}');
+          define('SECURE_AUTH_KEY',  '{{ lookup('password', '/dev/null chars=ascii_letters length=64') }}');
+          define('LOGGED_IN_KEY',    '{{ lookup('password', '/dev/null chars=ascii_letters length=64') }}');
+          define('NONCE_KEY',        '{{ lookup('password', '/dev/null chars=ascii_letters length=64') }}');
+          define('AUTH_SALT',        '{{ lookup('password', '/dev/null chars=ascii_letters length=64') }}');
+          define('SECURE_AUTH_SALT', '{{ lookup('password', '/dev/null chars=ascii_letters length=64') }}');
+          define('LOGGED_IN_SALT',   '{{ lookup('password', '/dev/null chars=ascii_letters length=64') }}');
+          define('NONCE_SALT',       '{{ lookup('password', '/dev/null chars=ascii_letters length=64') }}');
+
+          $table_prefix = 'wp_';
+
+          define('WP_DEBUG', false);
+
+          if ( !defined('ABSPATH') )
+              define('ABSPATH', dirname(__FILE__) . '/');
+
+          require_once(ABSPATH . 'wp-settings.php');
+        dest: /var/www/html/wordpress/wp-config.php
+
+  handlers:
     - name: Restart Apache
       service:
         name: apache2
         state: restarted
 
-    - name: Allow port 80 for HTTP (iptables)
-      iptables:
-        chain: INPUT
-        protocol: tcp
-        dport: 80
-        jump: ACCEPT
-        state: present
 
-    - name: Allow port 9100 for Node Exporter (iptables)
-      iptables:
-        chain: INPUT
-        protocol: tcp
-        dport: 9100
-        jump: ACCEPT
-        state: present
+- hosts: mysql_slave
+  become: true
+  vars_files:
+    - vars.yml
+  tasks:
+    - name: Stop MySQL Service on Slave
+      service:
+        name: mysql
+        state: stopped
+
+    - name: Backup MySQL Database on Slave
+      command: "{{ mysql_backup_script }}"
+      register: backup_result
+      failed_when: backup_result.rc != 0
+      changed_when: backup_result.rc == 0
+
+    - name: Copy backup to master server
+      copy:
+        src: "{{ backup_result.stdout.split()[-1] }}"  # Assuming last line of output is backup file path
+        dest: /tmp/mysql_backup.tar.gz
+      delegate_to: "{{ mysql_master }}"
+
+- hosts: mysql_master
+  become: true
+  tasks:
+    - name: Stop MySQL Service on Master
+      service:
+        name: mysql
+        state: stopped
+
+    - name: Remove existing data directory
+      file:
+        path: /var/lib/mysql
+        state: absent
+
+    - name: Create new data directory
+      file:
+        path: /var/lib/mysql
+        state: directory
+        mode: 0700
+        owner: mysql
+        group: mysql
+
+    - name: Extract the backup
+      unarchive:
+        src: /tmp/mysql_backup.tar.gz
+        dest: /var/lib/mysql
+        remote_src: yes
+
+    - name: Restore database permissions
+      command: chown -R mysql:mysql /var/lib/mysql
+
+    - name: Start MySQL Service on Master
+      service:
+        name: mysql
+        state: started
+
+    - name: Remove backup file from master
+      file:
+        path: /tmp/mysql_backup.tar.gz
+        state: absent
+
+- hosts: mysql_slave
+  become: true
+  tasks:
+    - name: Start MySQL Service on Slave
+      service:
+        name: mysql
+        state: started
+
+    - name: Reset Slave Replication
+      mysql_replication:
+        mode: reset_slave
+
+    - name: Get master status
+      mysql_replication:
+        mode: getmaster
+        login_host: "{{ mysql_master }}"
+        login_user: "{{ mysql_replication_user }}"
+        login_password: "{{ mysql_replication_password }}"
+      register: master_status
+      delegate_to: "{{ mysql_master }}"
+
+    - name: Configure slave replication
+      mysql_replication:
+        mode: changemaster
+        master_host: "{{ mysql_master }}"
+        master_user: "{{ mysql_replication_user }}"
+        master_password: "{{ mysql_replication_password }}"
+        master_log_file: "{{ master_status.File }}"
+        master_log_pos: "{{ master_status.Position }}"
+
+    - name: Start slave
+      mysql_replication:
+        mode: startslave
 
 - hosts: mysql_master
   become: true
@@ -329,16 +402,12 @@
         state: present
         update_cache: yes
 
-    - name: Start MySQL Service
-      service:
-        name: mysql
-        state: started
-        enabled: yes
-
-    - name: Configure MySQL for Replication
+    - name: Configure MySQL for Replication (Master)
       blockinfile:
         path: /etc/mysql/mysql.conf.d/mysqld.cnf
+        create: yes
         block: |
+          [mysqld]
           server-id = 1
           log_bin = mysql-bin
           binlog_format = row
@@ -346,46 +415,33 @@
           enforce-gtid-consistency
           log-replica-updates
           bind-address = 0.0.0.0
-        marker: "# {mark}  MySQL MASTER - mysqld.cnf"
-        replace:
-          regexp: '^server-id.*$'
+      notify: Restart MySQL
 
     - name: Set MySQL Root Password
       mysql_user:
         name: root
         password: "{{ mysql_root_password }}"
-        login_unix_socket: /var/run/mysqld/mysqld.sock
+        host: localhost
+        state: present
 
     - name: Create WordPress database
       mysql_db:
         name: "{{ mysql_db }}"
         state: present
 
-    - name: Create Replication/WordPress User
+    - name: Create Replication User
       mysql_user:
         name: "{{ mysql_replication_user }}"
         password: "{{ mysql_replication_password }}"
         host: '%'
-        priv: '*.*:ALL,REPLICATION SLAVE'
+        priv: '*.*:REPLICATION SLAVE,REPLICATION CLIENT'
         state: present
 
-    - name: Grant privileges on wordpress_db
-      mysql_db:
-        name: "{{ mysql_db }}"
-        state: present
-        priv: "{{ mysql_replication_user }}@'%':ALL"
-
-    - name: Restart MySQL
-      service:
-        name: mysql
-        state: restarted
-
-    - name: Allow port 3306 for MySQL (iptables)
-      iptables:
-        chain: INPUT
-        protocol: tcp
-        dport: 3306
-        jump: ACCEPT
+    - name: Create WordPress User
+      mysql_user:
+        name: "{{ wordpress_user }}"
+        password: "{{ wordpress_password }}"
+        priv: '{{ mysql_db }}.*:ALL'
         state: present
 
     - name: Download MySQLD Exporter
@@ -410,31 +466,90 @@
           User=nobody
           Group=nobody
           Type=simple
-          ExecStart=/usr/local/bin/mysqld_exporter-{{ mysqld_exporter_version }}.linux-amd64/mysqld_exporter \
-            --collect.info_schema.tables \
-            --collect.info_schema.processlist \
-            --collect.info_schema.innodb_trx \
-            --collect.info_schema.innodb_metrics \
-            --collect.performance_schema.events_statements_summary_by_digest \
-            --collect.performance_schema.table_io_waits_summary_by_table
+          ExecStart=/usr/local/bin/mysqld_exporter-{{ mysqld_exporter_version }}.linux-amd64/mysqld_exporter
 
           [Install]
           WantedBy=multi-user.target
         dest: /etc/systemd/system/mysqld_exporter.service
 
     - name: Enable and start MySQLD Exporter service
-      service:
+      systemd:
         name: mysqld_exporter
         enabled: yes
         state: started
+        daemon_reload: yes
 
-    - name: Allow port 9104 for MySQL Exporter (iptables)
-      iptables:
-        chain: INPUT
-        protocol: tcp
-        dport: 9104
-        jump: ACCEPT
+  handlers:
+    - name: Restart MySQL
+      service:
+        name: mysql
+        state: restarted
+
+- hosts: mysql_slave
+  become: true
+  tasks:
+    - name: Install MySQL Server
+      apt:
+        name:
+          - mysql-server
+          - python3-mysqldb
         state: present
+        update_cache: yes
+
+    - name: Configure MySQL for Replication (Slave)
+      blockinfile:
+        path: /etc/mysql/mysql.conf.d/mysqld.cnf
+        create: yes
+        block: |
+          [mysqld]
+          server-id = 2
+          relay-log = /var/log/mysql/mysql-relay-bin.log
+          log_bin = /var/log/mysql/mysql-bin.log
+          binlog_do_db = {{ mysql_db }}
+          bind-address = 0.0.0.0
+      notify: Restart MySQL
+
+    - name: Set MySQL Root Password
+      mysql_user:
+        name: root
+        password: "{{ mysql_root_password }}"
+        host: localhost
+        state: present
+
+    - name: Download MySQLD Exporter
+      get_url:
+        url: "https://github.com/prometheus/mysqld_exporter/releases/download/v{{ mysqld_exporter_version }}/mysqld_exporter-{{ mysqld_exporter_version }}.linux-amd64.tar.gz"
+        dest: /tmp/mysqld_exporter.tar.gz
+
+    - name: Extract MySQLD Exporter
+      unarchive:
+        src: /tmp/mysqld_exporter.tar.gz
+        dest: /usr/local/bin
+        remote_src: yes
+
+    - name: Create MySQLD Exporter service file
+      copy:
+        content: |
+          [Unit]
+          Description=MySQLD Exporter
+          After=network.target mysqld.service
+
+          [Service]
+          User=nobody
+          Group=nobody
+          Type=simple
+          ExecStart=/usr/local/bin/mysqld_exporter-{{ mysqld_exporter_version }}.linux-amd64/mysqld_exporter
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/mysqld_exporter.service
+
+    - name: Enable and start MySQLD Exporter service
+      systemd:
+        name: mysqld_exporter
+        enabled: yes
+        state: started
+        daemon_reload: yes
 
   handlers:
     - name: Restart MySQL
