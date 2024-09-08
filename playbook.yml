@@ -17,11 +17,29 @@
         state: present
         update_cache: yes
 
+    - name: Add Elastic GPG key
+      apt_key:
+        url: https://artifacts.elastic.co/GPG-KEY-elasticsearch
+        state: present
+
+    - name: Add Elastic repository
+      apt_repository:
+        repo: deb https://artifacts.elastic.co/packages/7.x/apt stable main
+        state: present
+        update_cache: yes
+
     - name: Install Filebeat
       apt:
         name: filebeat
         state: present
         update_cache: yes
+      register: filebeat_install
+      ignore_errors: yes
+
+    - name: Display Filebeat installation error
+      debug:
+        msg: "Failed to install Filebeat: {{ filebeat_install.msg }}"
+      when: filebeat_install is failed
 
     - name: Configure Filebeat
       copy:
@@ -41,7 +59,15 @@
             - add_host_metadata:
                 when.not.contains.tags: forwarded
         dest: /etc/filebeat/filebeat.yml
+      when: filebeat_install is succeeded
       notify: Restart Filebeat
+
+    - name: Enable and start Filebeat service
+      systemd:
+        name: filebeat
+        enabled: yes
+        state: started
+      when: filebeat_install is succeeded
 
     - name: Install Node Exporter
       unarchive:
@@ -82,6 +108,12 @@
       loop: "{{ firewall_ports }}"
 
   handlers:
+    - name: Restart Filebeat
+      systemd:
+        name: filebeat
+        state: restarted
+      when: filebeat_install is succeeded
+      
     - name: Restart Filebeat
       service:
         name: filebeat
@@ -142,10 +174,12 @@
         dest: /opt
         remote_src: yes
 
-    - name: Create Prometheus user and group
+    - name: Create Prometheus group
       group:
         name: prometheus
         state: present
+
+    - name: Create Prometheus user
       user:
         name: prometheus
         group: prometheus
@@ -640,8 +674,8 @@
         state: present
 
     - name: Get Master server status
-      mysql_replication_status:
-        mode: master_status
+      mysql_replication:
+        mode: getmaster
         login_user: root
         login_password: "{{ mysql_root_password }}"
       register: master_status
@@ -657,12 +691,12 @@
           log_bin = /var/log/mysql/mysql-bin.log
           binlog_do_db = {{ mysql_db }}
           bind-address = 0.0.0.0
-          master_host = {{ master_status.master_host }}
-          master_port = {{ master_status.master_port }}
+          master_host = {{ master_status.Master_Host }}
+          master_port = {{ master_status.Master_Port }}
           master_user = {{ mysql_replication_user }}
           master_password = {{ mysql_replication_password }}
-          master_log_file = {{ master_status.master_log_file }}
-          master_log_pos = {{ master_status.master_log_pos }}
+          master_log_file = {{ master_status.File }}
+          master_log_pos = {{ master_status.Position }}
       notify: Restart MySQL
 
     - name: Download MySQLD Exporter
@@ -701,7 +735,8 @@
         daemon_reload: yes
 
     - name: Start Slave
-      mysql_replication_start:
+      mysql_replication:
+        mode: startslave
         login_user: root
         login_password: "{{ mysql_root_password }}"
 
