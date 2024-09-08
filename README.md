@@ -44,7 +44,7 @@
 
 4.Перейдите в директорию проекта:
 
-    cd Final-project.git
+    cd Final-project
 
 5.Запустите Ansible playbook:
 
