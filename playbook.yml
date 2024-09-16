@@ -1,4 +1,3 @@
----
 - hosts: all
   become: true
   vars_files:
@@ -17,24 +16,58 @@
         state: present
         update_cache: yes
 
-    - name: Add Elastic GPG key
-      apt_key:
-        url: https://artifacts.elastic.co/GPG-KEY-elasticsearch
-        state: present
+    - name: Install Node Exporter
+      unarchive:
+        src: ./files/node_exporter-1.8.2.linux-amd64.tar.gz
+        dest: /usr/local/
+        remote_src: yes
+    - name: Create symlink for Node Exporter
+      file:
+        path: /usr/local/bin/node_exporter
+        state: link
+        dest: /usr/local/node_exporter-1.8.2.linux-amd64/node_exporter 
 
-    - name: Add Elastic repository
-      apt_repository:
-        repo: deb https://artifacts.elastic.co/packages/7.x/apt stable main
-        state: present
-        update_cache: yes
+    - name: Create Node Exporter service file
+      copy:
+        content: |
+          [Unit]
+          Description=Node Exporter
+          After=network.target
+
+          [Service]
+          User=nobody
+          Group=nobody
+          Type=simple
+          ExecStart=/usr/local/bin/node_exporter --web.listen-address=:9101 # Изменен порт
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/node_exporter.service
+
+    - name: Enable and start Node Exporter service
+      systemd:
+        name: node_exporter
+        enabled: yes
+        state: started
+        daemon_reload: yes
+
+    - name: Allow necessary ports (UFW)
+      ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      loop: "{{ firewall_ports }}"
+
+    - name: Copy Filebeat deb file
+      copy:
+        src: ./files/filebeat-8.15.1-amd64.deb
+        dest: /tmp/
 
     - name: Install Filebeat
       apt:
-        name: filebeat
-        state: present
-        update_cache: yes
+        deb: /tmp/filebeat-8.15.1-amd64.deb
       register: filebeat_install
-      ignore_errors: yes
+      failed_when: filebeat_install.rc != 0
 
     - name: Display Filebeat installation error
       debug:
@@ -48,9 +81,11 @@
           - type: file
             enabled: true
             paths:
-              - /var/log/nginx/*.log
-              - /var/log/apache2/*.log
-              - /var/log/mysql/*.log
+            - /var/log/nginx/access.log 
+            - /var/log/nginx/error.log
+            - /var/log/apache2/access.log
+            - /var/log/apache2/error.log
+            - /var/log/mysql/*.log
 
           output.elasticsearch:
             hosts: ["{{ remote_pc }}:9200"]
@@ -69,86 +104,85 @@
         state: started
       when: filebeat_install is succeeded
 
-    - name: Install Node Exporter
-      unarchive:
-        src: "https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz"
-        dest: /usr/local/bin
-        remote_src: yes
-
-    - name: Create Node Exporter service file
-      copy:
-        content: |
-          [Unit]
-          Description=Node Exporter
-          After=network.target
-
-          [Service]
-          User=nobody
-          Group=nobody
-          Type=simple
-          ExecStart=/usr/local/bin/node_exporter-{{ node_exporter_version }}.linux-amd64/node_exporter
-
-          [Install]
-          WantedBy=multi-user.target
-        dest: /etc/systemd/system/node_exporter.service
-
-    - name: Enable and start Node Exporter service
-      systemd:
-        name: node_exporter
-        enabled: yes
-        state: started
-        daemon_reload: yes
-
-    - name: Allow necessary ports (iptables)
-      iptables:
-        chain: INPUT
-        protocol: tcp
-        destination_port: "{{ item }}"
-        jump: ACCEPT
-      loop: "{{ firewall_ports }}"
-
-  handlers:
-    - name: Restart Filebeat
-      systemd:
-        name: filebeat
-        state: restarted
-      when: filebeat_install is succeeded
-      
-    - name: Restart Filebeat
-      service:
-        name: filebeat
-        state: restarted
-
+# Установка и настройка Elasticsearch, Kibana и Logstash
 - hosts: remote_pc
   become: true
+  vars_files:
+    - vars.yml
   tasks:
+    - name: Copy Elasticsearch deb file
+      copy:
+        src: ./files/elasticsearch-8.15.1-amd64.deb
+        dest: /tmp/
+
     - name: Install Elasticsearch
       apt:
-        name: elasticsearch
-        state: present
-        update_cache: yes
+        deb: /tmp/elasticsearch-8.15.1-amd64.deb
 
-    - name: Configure Elasticsearch
+    - name: Configure Elasticsearch (Single Node)
       copy:
         content: |
           network.host: 0.0.0.0
           http.port: 9200
-          discovery.type: single-node
+          cluster.name: my-elk-cluster 
+          node.name: elk-node-1 
+          discovery.type: single-node 
         dest: /etc/elasticsearch/elasticsearch.yml
+
+    - name: Copy Kibana deb file
+      copy:
+        src: ./files/kibana-8.15.1-amd64.deb
+        dest: /tmp/
 
     - name: Install Kibana
       apt:
-        name: kibana
-        state: present
-        update_cache: yes
+        deb: /tmp/kibana-8.15.1-amd64.deb
 
     - name: Configure Kibana
       copy:
         content: |
           server.port: 5601
           server.host: "0.0.0.0"
-          elasticsearch.hosts: ["http://localhost:9200"]
+          elasticsearch.hosts: ["http://{{ remote_pc }}:9200"] # Исправлен адрес Elasticsearch
         dest: /etc/kibana/kibana.yml
+
+    - name: Copy Logstash deb file
+      copy:
+        src: ./files/logstash-8.15.1-amd64.deb
+        dest: /tmp/
+
+    - name: Install Logstash
+      apt:
+        deb: /tmp/logstash-8.15.1-amd64.deb
+
+    - name: Configure Logstash
+      copy:
+        content: |
+          input {
+            beats {
+              port => 5044
+            }
+          }
+
+          filter {
+            grok {
+              match => { "message" => "%{COMBINEDAPACHELOG}" } # Проверьте соответствие формата логов
+            }
+            date {
+              match => [ "timestamp" , "dd/MMM/yyyy:HH:mm:ss Z" ]
+            }
+            geoip {
+              source => "clientip"
+            }
+          }
+
+          output {
+            elasticsearch {
+              hosts => ["localhost:9200"]
+              index => "%{[@metadata][beat]}-%{+YYYY.MM.dd}"
+            }
+          }
+        dest: /etc/logstash/conf.d/logstash.conf
 
     - name: Start Elasticsearch service
       service:
@@ -162,15 +196,27 @@
         state: started
         enabled: true
 
-    # Install Prometheus
-    - name: Download Prometheus
-      get_url:
-        url: "https://github.com/prometheus/prometheus/releases/download/v{{ prometheus_version }}/prometheus-{{ prometheus_version }}.linux-amd64.tar.gz"
-        dest: /tmp/prometheus.tar.gz
+    - name: Start Logstash service
+      service:
+        name: logstash
+        state: started
+        enabled: true
+
+# Установка и настройка Prometheus
+- hosts: remote_pc
+  become: true
+  vars_files:
+    - vars.yml
+
+  tasks:
+    - name: Copy Prometheus deb file
+      copy:
+        src: ./files/prometheus-2.54.1.linux-amd64.tar.gz # Исправлено имя файла
+        dest: /tmp/
 
     - name: Extract Prometheus
       unarchive:
-        src: /tmp/prometheus.tar.gz
+        src: /tmp/prometheus-2.54.1.linux-amd64.tar.gz
         dest: /opt
         remote_src: yes
 
@@ -188,7 +234,7 @@
 
     - name: Set Prometheus directory ownership
       file:
-        path: /opt/prometheus-{{ prometheus_version }}.linux-amd64
+        path: /opt/prometheus-2.54.1.linux-amd64
         owner: prometheus
         group: prometheus
         state: directory
@@ -198,9 +244,9 @@
       copy:
         content: |
           global:
-            scrape_interval:     15s # Set the scrape interval to every 15 seconds.
-            evaluation_interval: 15s # Evaluate rules every 15 seconds.
-            # scrape_timeout
+            scrape_interval: 15s 
+            evaluation_interval: 15s 
+            scrape_timeout: 20s  # Увеличено время ожидания
           scrape_configs:
           - job_name: 'prometheus'
             static_configs:
@@ -209,11 +255,12 @@
           - job_name: 'node_exporter'
             static_configs:
             - targets: 
-              - '{{ apache_server_1 }}:9100'
-              - '{{ apache_server_2 }}:9100'
-              - '{{ nginx_load_balancer }}:9100'
-              - '{{ mysql_master }}:9100'
-              - '{{ mysql_slave }}:9100'
+              - '{{ apache_server_1 }}:9101' # Изменен порт
+              - '{{ apache_server_2 }}:9101'
+              - '{{ nginx_load_balancer }}:9101'
+              - '{{ mysql_master }}:9101'
+              - '{{ mysql_slave }}:9101'
+              - '{{ remote_pc }}:9101' # Мониторинг самого сервера Prometheus
 
           - job_name: 'mysqld_exporter'
             static_configs:
@@ -221,7 +268,26 @@
               - '{{ mysql_master }}:9104'
               - '{{ mysql_slave }}:9104'
 
-        dest: /opt/prometheus-{{ prometheus_version }}.linux-amd64/prometheus.yml
+          - job_name: 'filebeat'
+            static_configs:
+            - targets:
+              - '{{ apache_server_1 }}:5066'
+              - '{{ apache_server_2 }}:5066'
+              - '{{ nginx_load_balancer }}:5066'
+              - '{{ mysql_master }}:5066'
+              - '{{ mysql_slave }}:5066'
+              - '{{ remote_pc }}:5066'
+
+          - job_name: 'logstash'
+            static_configs:
+            - targets:
+              - '{{ remote_pc }}:9600'
+
+          - job_name: 'elasticsearch'
+            static_configs:
+            - targets:
+              - '{{ remote_pc }}:9200'
+        dest: /opt/prometheus-2.54.1.linux-amd64/prometheus.yml
 
     - name: Create Prometheus service file
       copy:
@@ -235,7 +301,7 @@
           User=prometheus
           Group=prometheus
           Type=simple
-          ExecStart=/opt/prometheus-{{ prometheus_version }}.linux-amd64/prometheus --config.file /opt/prometheus-{{ prometheus_version }}.linux-amd64/prometheus.yml --storage.tsdb.path /opt/prometheus-{{ prometheus_version }}.linux-amd64/data/ --web.console.templates=/opt/prometheus-{{ prometheus_version }}.linux-amd64/consoles --web.console.libraries=/opt/prometheus-{{ prometheus_version }}.linux-amd64/console_libraries
+          ExecStart=/opt/prometheus-2.54.1.linux-amd64/prometheus --config.file /etc/prometheus/prometheus.yml --storage.tsdb.path /var/lib/prometheus/ --web.console.templates=/etc/prometheus/consoles --web.console.libraries=/etc/prometheus/console_libraries
 
           [Install]
           WantedBy=multi-user.target
@@ -248,7 +314,12 @@
         state: started
         daemon_reload: yes
 
-    # Install Grafana
+# Установка и настройка Grafana
+- hosts: remote_pc
+  become: true
+  vars_files:
+    - vars.yml
+  tasks:
     - name: Add Grafana repository
       apt_repository:
         repo: deb https://packages.grafana.com/oss/deb stable main
@@ -273,10 +344,6 @@
           [database]
           type = sqlite3
           path = /var/lib/grafana/grafana.db
-          host = 127.0.0.1:3306
-          name = grafana
-          user = root
-          password = 
 
           [security]
           admin_user = admin
@@ -308,8 +375,11 @@
         state: started
         daemon_reload: yes
 
+# Установка и настройка Nginx Load Balancer
 - hosts: nginx_load_balancer
   become: true
+  vars_files:
+    - vars.yml
   tasks:
     - name: Install Nginx
       apt:
@@ -321,7 +391,7 @@
       copy:
         content: |
           events {
-              worker_connections 1024;
+          worker_connections 1024;
           }
 
           http {
@@ -349,14 +419,11 @@
         state: started
         enabled: true
 
-  handlers:
-    - name: Restart Nginx
-      service:
-        name: nginx
-        state: restarted
-
+# Установка и настройка Apache и WordPress
 - hosts: apache_servers
   become: true
+  vars_files:
+    - vars.yml
   tasks:
     - name: Install Apache and PHP packages
       apt:
@@ -406,11 +473,11 @@
       copy:
         content: |
           <VirtualHost *:80>
-              ServerAdmin webmaster@localhost
-              DocumentRoot /var/www/html/wordpress
-              ServerName {{ wordpress_url }}
+          ServerAdmin webmaster@localhost
+          DocumentRoot /var/www/html/wordpress
+          ServerName {{ wordpress_url }}
 
-              <Directory /var/www/html/wordpress/>
+          <Directory /var/www/html/wordpress/>
                   Options FollowSymLinks
                   AllowOverride All
                   Require all granted
@@ -466,88 +533,11 @@
           require_once(ABSPATH . 'wp-settings.php');
         dest: /var/www/html/wordpress/wp-config.php
 
-  handlers:
-    - name: Restart Apache
-      service:
-        name: apache2
-        state: restarted
-
-
-- hosts: mysql_slave
+# Установка и настройка MySQL Master
+- hosts: mysql_master
   become: true
   vars_files:
     - vars.yml
-  tasks:
-    - name: Stop MySQL Service on Slave
-      service:
-        name: mysql
-        state: stopped
-
-    - name: Backup MySQL Database on Slave
-      command: "{{ mysql_backup_script }}"
-      register: backup_result
-      failed_when: backup_result.rc != 0
-      changed_when: backup_result.rc == 0
-
-    - name: Copy backup to master server
-      copy:
-        src: "{{ backup_result.stdout.split()[-1] }}"  # Assuming last line of output is backup file path
-        dest: /tmp/mysql_backup.tar.gz
-      delegate_to: "{{ mysql_master }}"
-
-    - name: Create cron job for backup
-      cron:
-        name: "MySQL Backup"
-        user: root
-        minute: "0"  # Запуск каждый час в начале часа
-        hour: "*/4" # Запуск каждые 4 часа 
-        #day: "*"  # Запуск каждый день 
-        #month: "*" # Запуск каждый месяц
-        #weekday: "*" # Запуск каждый день недели 
-        job: "{{ mysql_backup_script }}"
-
-- hosts: mysql_master
-  become: true
-  tasks:
-    - name: Stop MySQL Service on Master
-      service:
-        name: mysql
-        state: stopped
-
-    - name: Remove existing data directory
-      file:
-        path: /var/lib/mysql
-        state: absent
-
-    - name: Create new data directory
-      file:
-        path: /var/lib/mysql
-        state: directory
-        mode: 0700
-        owner: mysql
-        group: mysql
-
-    - name: Extract the backup
-      unarchive:
-        src: /tmp/mysql_backup.tar.gz
-        dest: /var/lib/mysql
-        remote_src: yes
-
-    - name: Restore database permissions
-      command: chown -R mysql:mysql /var/lib/mysql
-
-    - name: Start MySQL Service on Master
-      service:
-        name: mysql
-        state: started
-
-    - name: Remove backup file from master
-      file:
-        path: /tmp/mysql_backup.tar.gz
-        state: absent
-
-- hosts: mysql_master
-  become: true
   tasks:
     - name: Install MySQL Server
       apt:
@@ -583,15 +573,15 @@
       mysql_user:
         name: "{{ mysql_backup_user }}"
         password: "{{ mysql_backup_password }}"
-        host: '%'  # Или укажите конкретный хост, если нужно
-        priv: '*.*:SELECT, LOCK TABLES, RELOAD, SHOW DATABASES, REPLICATION CLIENT'
+        host: '%' 
+        priv: '.:SELECT, LOCK TABLES, RELOAD, SHOW DATABASES, REPLICATION CLIENT'
         state: present
 
     - name: Grant REPLICATION SLAVE to backup user (optional, if needed)
       mysql_user:
         name: "{{ mysql_backup_user }}"
-        host: '%'  # Или укажите конкретный хост, если нужно
-        priv: '*.*:REPLICATION SLAVE'
+        host: '%' 
+        priv: '.:REPLICATION SLAVE'
         state: present
 
     - name: Create WordPress database
@@ -604,7 +594,7 @@
         name: "{{ mysql_replication_user }}"
         password: "{{ mysql_replication_password }}"
         host: '%'
-        priv: '*.*:REPLICATION SLAVE,REPLICATION CLIENT'
+        priv: '.:REPLICATION SLAVE,REPLICATION CLIENT'
         state: present
 
     - name: Create WordPress User
@@ -614,14 +604,14 @@
         priv: '{{ mysql_db }}.*:ALL'
         state: present
 
-    - name: Download MySQLD Exporter
-      get_url:
-        url: "https://github.com/prometheus/mysqld_exporter/releases/download/v{{ mysqld_exporter_version }}/mysqld_exporter-{{ mysqld_exporter_version }}.linux-amd64.tar.gz"
-        dest: /tmp/mysqld_exporter.tar.gz
+    - name: Copy Prometheus deb file
+      copy:
+        src: ./files/mysqld_exporter-0.15.1.linux-amd64.tar.gz # Исправлено имя файла
+        dest: /tmp/
 
     - name: Extract MySQLD Exporter
       unarchive:
-        src: /tmp/mysqld_exporter.tar.gz
+        src: /tmp/mysqld_exporter-0.15.1.linux-amd64.tar.gz
         dest: /usr/local/bin
         remote_src: yes
 
@@ -636,7 +626,7 @@
           User=nobody
           Group=nobody
           Type=simple
-          ExecStart=/usr/local/bin/mysqld_exporter-{{ mysqld_exporter_version }}.linux-amd64/mysqld_exporter
+          ExecStart=/usr/local/bin/mysqld_exporter # Исправлен путь
 
           [Install]
           WantedBy=multi-user.target
@@ -649,14 +639,26 @@
         state: started
         daemon_reload: yes
 
-  handlers:
-    - name: Restart MySQL
-      service:
-        name: mysql
-        state: restarted
+    - name: Create backup directory
+      file:
+        path: /tmp/{{ lookup('pipe', 'date +"%Y-%m-%d"') }}
+        state: directory
 
+    - name: Create dump of all databases
+      shell: "mysqldump --single-transaction --routines --events --triggers --master-data=2 -u {{ mysql_backup_user }} -p{{ mysql_backup_password }} --all-databases | gzip -1 > /tmp/{{ lookup('pipe', 'date +"%Y-%m-%d"') }}/{{ lookup('pipe', 'date +"%Y-%m-%d"') }}.sql.gz"
+
+    - name: Remove old backups
+      file:
+        path: /tmp/{{ item }}
+        state: absent
+      with_items:
+        - "{{ lookup('pipe', 'find /tmp/ -maxdepth 1 -type d -mtime +7 -print0 | xargs -0 -n1 basename') }}"
+
+# Установка и настройка MySQL Slave
 - hosts: mysql_slave
   become: true
+  vars_files:
+    - vars.yml
   tasks:
     - name: Install MySQL Server
       apt:
@@ -673,7 +675,7 @@
         host: localhost
         state: present
 
-    - name: Get Master server status
+    - name: Get Master server status 
       mysql_replication:
         mode: getmaster
         login_user: root
@@ -688,25 +690,25 @@
           [mysqld]
           server-id = 2
           relay-log = /var/log/mysql/mysql-relay-bin.log
-          log_bin = /var/log/mysql/mysql-bin.log
-          binlog_do_db = {{ mysql_db }}
           bind-address = 0.0.0.0
-          master_host = {{ master_status.Master_Host }}
-          master_port = {{ master_status.Master_Port }}
+          master_host = {{ mysql_master }} 
+          master_port = 3306 
           master_user = {{ mysql_replication_user }}
           master_password = {{ mysql_replication_password }}
-          master_log_file = {{ master_status.File }}
+          master_log_file = {{ master_status.File }} 
           master_log_pos = {{ master_status.Position }}
       notify: Restart MySQL
 
-    - name: Download MySQLD Exporter
-      get_url:
-        url: "https://github.com/prometheus/mysqld_exporter/releases/download/v{{ mysqld_exporter_version }}/mysqld_exporter-{{ mysqld_exporter_version }}.linux-amd64.tar.gz"
-        dest: /tmp/mysqld_exporter.tar.gz
+
+    - name: Copy MySQLD Exporter deb file
+      copy:
+        src: ./files/mysqld_exporter-0.15.1.linux-amd64.tar.gz # Исправлено имя файла
+        dest: /tmp/
+
 
     - name: Extract MySQLD Exporter
       unarchive:
-        src: /tmp/mysqld_exporter.tar.gz
+        src: /tmp/mysqld_exporter-0.15.1.linux-amd64.tar.gz
         dest: /usr/local/bin
         remote_src: yes
 
@@ -721,7 +723,7 @@
           User=nobody
           Group=nobody
           Type=simple
-          ExecStart=/usr/local/bin/mysqld_exporter-{{ mysqld_exporter_version }}.linux-amd64/mysqld_exporter
+          ExecStart=/usr/local/bin/mysqld_exporter # Исправлен путь
 
           [Install]
           WantedBy=multi-user.target
@@ -740,16 +742,42 @@
         login_user: root
         login_password: "{{ mysql_root_password }}"
 
-    - name: Create cron job for backup
+    - name: Copy backup script to remote server
+      copy:
+        src: ./files/backup_mysql.sh
+        dest: /tmp/backup_mysql.sh
+        mode: '0755'
+
+    - name: Execute backup script
+      shell: /tmp/backup_mysql.sh
+
+    - name: Create cron job for MySQL backup
       cron:
         name: "MySQL Backup"
-        user: root
-        minute: "0"
-        hour: "0"
-        job: "{{ mysql_backup_script }}"
-
-  handlers:
-    - name: Restart MySQL
-      service:
-        name: mysql
-        state: restarted
+        user: root  # Или другой пользователь, от имени которого нужно запускать бэкап
+        minute: "0"  # Минута запуска (0 для начала часа)
+        hour: "0"   # Час запуска (0 для полуночи)
+        day: "*"    # День месяца
+        month: "*"   # Месяц
+        weekday: "*"  # День недели
+        job: "/tmp/backup_mysql.sh"  # Запуск скрипта бэкапа
+        
+      
+# Обработчики
+handlers:
+  - name: Restart Filebeat
+    systemd:
+      name: filebeat
+      state: restarted
+  - name: Restart Nginx
+    service:
+      name: nginx
+      state: restarted
+  - name: Restart Apache
+    service:
+      name: apache2
+      state: restarted
+  - name: Restart MySQL
+    service:
+      name: mysql
+      state: restarted
