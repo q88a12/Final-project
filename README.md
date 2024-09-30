@@ -32,7 +32,7 @@
 ### Установка
 1.Установите Ansible:
 
-    sudo apt install ansible
+    sudo apt install ansible sshpass
 
 2.Установите Git, если он еще не установлен:
 
