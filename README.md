@@ -1,70 +1,74 @@
 # Создание отказоустойчивой инфраструктуры веб-приложения с балансировкой нагрузки, репликацией баз данных и системой мониторинга
 
-### Описание проекта
-Этот проект представляет собой Ansible playbook для автоматизированного развертывания отказоустойчивой инфраструктуры веб-приложения. Инфраструктура включает балансировку нагрузки, репликацию базы данных MySQL и систему мониторинга с использованием Prometheus и Grafana.
+## Описание проекта
 
-### Инфраструктура проекта:
-![Диаграмма без названия drawio](https://github.com/user-attachments/assets/8ab4bd73-1b81-4475-8b05-953166d9c29a)
+Этот проект представляет собой Ansible playbook для автоматизированного развертывания отказоустойчивой инфраструктуры веб-приложения. Включает в себя балансировку нагрузки, репликацию базы данных MySQL и систему мониторинга с использованием Prometheus и Grafana.
 
-- Балансировка нагрузки (Nginx balanser): Nginx используется для распределения нагрузки между двумя веб-серверами Apache.
-- Веб-серверы (Apache servers): Два сервера Apache с PHP обеспечивают работу веб-приложения WordPress.
-- База данных (MySQL master-slave): MySQL настроен в режиме master-slave репликации для обеспечения высокой доступности данных.
-- Мониторинг (Remote PC): Prometheus собирает метрики с различных сервисов, а Grafana предоставляет удобный интерфейс для их визуализации.
-- Логирование (Remote PC): Elasticsearch, Logstash и Kibana используются для сбора, обработки и визуализации логов.
+## Инфраструктура проекта
 
-### Стек технологий
+![Диаграмма инфраструктуры](https://github.com/user-attachments/assets/8ab4bd73-1b81-4475-8b05-953166d9c29a)
 
-- Ansible: Автоматизация развертывания и настройки
-- Nginx: Балансировщик нагрузки
-- Apache: Веб-сервер
-- PHP: Язык программирования для веб-приложения
-- MySQL: База данных
-- Prometheus: Система мониторинга
-- Grafana: Визуализация данных мониторинга
-- Elasticsearch: Поиск и аналитика логов
-- Kibana: Визуализация логов
-- Filebeat: Агент для сбора логов
+- **Балансировка нагрузки (Nginx)**: Используется для распределения нагрузки между двумя веб-серверами Apache.
+- **Веб-серверы (Apache)**: Два сервера Apache с PHP для работы веб-приложения WordPress.
+- **База данных (MySQL master-slave)**: Настроена в режиме репликации для обеспечения высокой доступности данных.
+- **Мониторинг**: Prometheus собирает метрики с различных сервисов, а Grafana визуализирует их.
+- **Логирование**: Elasticsearch, Logstash и Kibana используются для обработки и визуализации логов.
 
-### Предварительные требования
+## Стек технологий
+
+- **Ansible**: Автоматизация развертывания и настройки
+- **Nginx**: Балансировщик нагрузки
+- **Apache**: Веб-сервер
+- **PHP**: Язык программирования для веб-приложения
+- **MySQL**: Система управления базами данных
+- **Prometheus**: Система мониторинга
+- **Grafana**: Визуализация данных мониторинга
+- **Elasticsearch**: Поиск и аналитика логов
+- **Kibana**: Визуализация логов
+- **Filebeat**: Агент для сбора логов
+
+## Предварительные требования
+
 - Несколько виртуальных машин или серверов с установленной операционной системой Ubuntu.
 
+## Установка
 
-### Установка
-1.Установите Ansible:
+1. Установите Ansible:
+   ```bash
+   sudo apt install ansible sshpass
+   ```
 
-    sudo apt install ansible sshpass
+2. Установите Git (если не установлен):
+   ```bash
+   sudo apt install git
+   ```
 
-2.Установите Git, если он еще не установлен:
+3. Клонируйте репозиторий:
+   ```bash
+   git clone https://github.com/q88a12/Final-project.git
+   ```
 
-    sudo apt install git
-    
-3.Клонируйте репозиторий:
+4. Перейдите в директорию проекта:
+   ```bash
+   cd Final-project
+   ```
 
-    git clone https://github.com/q88a12/Final-project.git
+5. Запустите Ansible playbook:
+   ```bash
+   ansible-playbook -i ./inventory.ini ./playbook.yml --extra-vars "variable_name=value"
+   ```
 
-4.Перейдите в директорию проекта:
+## Настройка
 
-    cd Final-project
+Перед запуском playbook необходимо настроить следующие параметры в файле `vars.yml`:
 
-5.Запустите Ansible playbook:
+- **IP-адреса серверов**: `nginx_ip`, `apache_ip_1`, `apache_ip_2`, `mysql_master_ip`, `mysql_slave_ip`, `prometheus_grafana_ip`, `elk_ip`
+- **Пароли**: `mysql_root_password`, `mysql_replication_password`, `wordpress_password`
+- **Доменное имя**: `wordpress_url`
 
-    ansible-playbook -i ./inventory.ini ./playbook.yml --extra-vars "variable_name=value"
+## Проверка работоспособности
 
-### Настройка
-Перед запуском playbook необходимо настроить следующие параметры в файле vars.yml
-
-IP-адреса серверов: nginx_ip, apache_ip_1, apache_ip_2, mysql_master_ip, mysql_slave_ip, prometheus_grafana_ip, elk_ip
-Пароли: mysql_root_password, mysql_replication_password, wordpress_password
-Доменное имя: wordpress_url
-
-Проверка работоспособности
-# Проект: Мониторинг и резервное копирование веб-приложений
-
-## Описание
-
-Этот проект настраивает и проверяет работоспособность Nginx, Apache, WordPress и стека ELK (Elasticsearch, Logstash, Kibana). Также реализовано резервное копирование базы данных MySQL с помощью автоматизированных задач.
-
-## Проверка Nginx и проксирования Apache
+### Проверка Nginx и проксирования Apache
 
 1. **Проверка статуса службы Nginx:**
    ```bash
@@ -89,7 +93,7 @@ IP-адреса серверов: nginx_ip, apache_ip_1, apache_ip_2, mysql_mast
    sudo ss -ntlp | grep :80
    ```
 
-## Проверка WordPress и удаленной базы данных MySQL
+### Проверка WordPress и удаленной базы данных MySQL
 
 1. **Открытие конфигурационного файла WordPress:**
    ```bash
@@ -112,7 +116,7 @@ IP-адреса серверов: nginx_ip, apache_ip_1, apache_ip_2, mysql_mast
    SHOW DATABASES;
    ```
 
-## Проверка репликации MySQL (Master-Slave)
+### Проверка репликации MySQL (Master-Slave)
 
 1. **Проверка состояния репликации на MySQL Slave:**
    ```bash
@@ -138,7 +142,7 @@ IP-адреса серверов: nginx_ip, apache_ip_1, apache_ip_2, mysql_mast
    SELECT * FROM test_table;
    ```
 
-## Проверка ELK стека (Elasticsearch, Logstash, Kibana)
+### Проверка ELK стека (Elasticsearch, Logstash, Kibana)
 
 1. **Проверка состояния Elasticsearch:**
    ```bash
@@ -160,8 +164,7 @@ IP-адреса серверов: nginx_ip, apache_ip_1, apache_ip_2, mysql_mast
    sudo systemctl status kibana
    ```
 
-5. **Проверка мониторинга:**
-   - **Проверка состояния Prometheus:**
+5. **Проверка состояния Prometheus:**
    ```bash
    sudo systemctl status prometheus
    ```
