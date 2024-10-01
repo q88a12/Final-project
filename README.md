@@ -66,6 +66,23 @@
 - **Пароли**: `mysql_root_password`, `mysql_replication_password`, `wordpress_password`
 - **Доменное имя**: `wordpress_url`
 
+Также в директории `inventory` находится файл `hosts.ini`, где необходимо определить логины, пароли и IP-адреса серверов:
+
+```ini
+nginx_load_balancer ansible_host=<IP_ADDRESS>
+apache_server_1 ansible_host=<IP_ADDRESS>
+apache_server_2 ansible_host=<IP_ADDRESS>
+mysql_master ansible_host=<IP_ADDRESS>
+mysql_slave ansible_host=<IP_ADDRESS>
+
+[apache_servers]
+apache_server_1
+apache_server_2
+
+[localhost]
+localhost ansible_connection=local
+```
+
 ## Проверка работоспособности
 
 ### Проверка Nginx и проксирования Apache
@@ -186,7 +203,3 @@
    ```bash
    crontab -l
    ```
-
----
-
-Эта структура поможет пользователям быстро найти нужную информацию и понять, как использовать проект.
