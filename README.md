@@ -51,12 +51,9 @@
     ansible-playbook -i ./inventory.ini ./playbook.yml --extra-vars "variable_name=value"
 
 ### Настройка
+Перед запуском playbook необходимо настроить следующие параметры в файле vars.yml
 
-Перед запуском playbook необходимо настроить следующие параметры в файле playbook.yml:
-
-    IP-адреса серверов: nginx_ip, apache_ip_1, apache_ip_2, mysql_master_ip, mysql_slave_ip, prometheus_grafana_ip, elk_ip
-
-    Пароли: mysql_root_password, mysql_replication_password, wordpress_password
-
-    Доменное имя: wordpress_url
+IP-адреса серверов: nginx_ip, apache_ip_1, apache_ip_2, mysql_master_ip, mysql_slave_ip, prometheus_grafana_ip, elk_ip
+Пароли: mysql_root_password, mysql_replication_password, wordpress_password
+Доменное имя: wordpress_url
 
